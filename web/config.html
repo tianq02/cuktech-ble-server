@@ -202,7 +202,7 @@ body.light .config-select { border-color: rgba(0,0,0,0.12); }
 </div>
 
 <script>
-const API = window.location.origin;
+const API = window.location.origin + (window.CUKTECH_BASE_PATH || "");
 let isDark = true;
 // 配置页状态追踪：语言切换时（applyTranslations 会重放静态文案）用钩子恢复动态状态
 let _configStatus = 'loading';   // 'loading' | 'loaded' | 'error'

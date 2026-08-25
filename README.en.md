@@ -180,6 +180,10 @@ cp config.yaml.example config.yaml
 | Mobile | `http://<IP>:8199/phone.html` | Mobile-optimized view |
 | Config | `http://<IP>:8199/config.html` | Online config, Xiaomi Cloud QR login |
 
+### Reverse-proxy subpaths
+
+Set `server.base_path` in `config.yaml` (or `CUKTECH_BASE_PATH`) when exposing the UI below a URL prefix, for example `base_path: "/cuktech"`. The dashboard and API will then be available at `https://<your_site>/cuktech/` and `https://<your_site>/cuktech/api/status`. Configure nginx to proxy the prefix to the server (preserving the `/cuktech` path).
+
 - **SSE real-time push**: Port data, status, quality scores delivered via SSE event stream
 - Real-time power charts (Chart.js)
 - Port control (C1/C2/C3/A)

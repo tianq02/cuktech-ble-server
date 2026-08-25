@@ -131,7 +131,7 @@
         // Initialize log level from server
         setTimeout(() => initLogLevel(), 0);
 
-        const API_BASE = window.location.origin;
+        const API_BASE = window.location.origin + (window.CUKTECH_BASE_PATH || "");
         const PORT_MAP = { 1: 'C1', 2: 'C2', 3: 'C3', 4: 'A' };
         const PORT_KEY_MAP = { 1: 'c1', 2: 'c2', 3: 'c3', 4: 'a' };
 

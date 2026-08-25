@@ -1,5 +1,5 @@
 // ── Charge History Module (shared between phone.html and index.html) ──
-const API = window.location.origin;
+const API = window.location.origin + (window.CUKTECH_BASE_PATH || "");
 let _sessionChart = null;
 
 // Format timestamp to local time string

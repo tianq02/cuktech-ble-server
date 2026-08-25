@@ -830,25 +830,14 @@ class Server:
         path = '/phone.html' if self.MOBILE_UA.search(ua) else '/index.html'
         entry = _static_cache.get(path)
         if entry:
-            accept_gzip = request.headers.get("Accept-Encoding", "").find("gzip") != -1
-            if accept_gzip and entry["gzipped"]:
-                body = entry["gzipped"]
-                headers = {
-                    "Content-Type": "text/html",
-                    "Content-Encoding": "gzip",
-                    "Content-Length": str(len(body)),
-                    "Cache-Control": "public, max-age=604800, immutable",
-                }
-            else:
-                body = entry["raw"]
-                headers = {
-                    "Content-Type": "text/html",
-                    "Content-Length": str(len(body)),
-                    "Cache-Control": "public, max-age=604800, immutable",
-                }
+            body = _frontend_body(entry["raw"])
+            headers = {
+                "Content-Type": "text/html",
+                "Content-Length": str(len(body)),
+                "Cache-Control": "public, max-age=604800, immutable",
+            }
             return web.Response(body=body, headers=headers)
-        return web.FileResponse(WEB_DIR / path.lstrip('/'))
-
+        return web.FileResponse(WEB_DIR / path.lstrip("/"))
     # ── Charge Session API ──
 
     async def handle_sessions(self, request):
@@ -1309,6 +1298,33 @@ class Server:
 WEB_DIR = Path(__file__).parent / "web"
 _server = None
 
+def _normalize_base_path(value: str) -> str:
+    value = (value or "").strip()
+    if not value or value == "/":
+        return ""
+    return "/" + value.strip("/")
+
+BASE_PATH = _normalize_base_path(os.environ.get("CUKTECH_BASE_PATH", load_config().server.base_path))
+
+def _strip_base_path(path: str) -> str:
+    if BASE_PATH and (path == BASE_PATH or path.startswith(BASE_PATH + "/")):
+        return path[len(BASE_PATH):] or "/"
+    return path
+
+def _route(path: str) -> str:
+    return f"{BASE_PATH}{path}" or "/"
+
+def _frontend_body(raw: bytes) -> bytes:
+    if not BASE_PATH:
+        return raw
+    text = raw.decode("utf-8")
+    text = text.replace("href=\"/static/", f"href=\"{BASE_PATH}/static/")
+    text = text.replace("src=\"/static/", f"src=\"{BASE_PATH}/static/")
+    marker = "<head>"
+    if marker in text:
+        text = text.replace(marker, f"{marker}<script>window.CUKTECH_BASE_PATH = {json.dumps(BASE_PATH)};</script>", 1)
+    return text.encode("utf-8")
+
 # ── 静态文件缓存（启动时预加载 + 预压缩） ──
 _static_cache = {}
 _GZIP_TYPES = (".js", ".css", ".html", ".svg", ".json", ".txt")
@@ -1368,11 +1384,15 @@ def _cache_static_files():
 
 async def handle_cached_static(request):
     """从内存缓存响应静态文件，避免磁盘 I/O 和运行时 gzip。"""
-    entry = _static_cache.get(request.path)
+    path = request.path
+    if BASE_PATH and (path == BASE_PATH or path.startswith(BASE_PATH + "/")):
+        path = path[len(BASE_PATH):] or "/"
+    entry = _static_cache.get(path)
     if entry is None:
         raise web.HTTPNotFound()
+    raw = _frontend_body(entry["raw"]) if entry["content_type"] == "text/html" else entry["raw"]
     accept_gzip = request.headers.get("Accept-Encoding", "").find("gzip") != -1
-    if accept_gzip and entry["gzipped"]:
+    if accept_gzip and entry["gzipped"] and raw is entry["raw"]:
         body = entry["gzipped"]
         headers = {
             "Content-Type": entry["content_type"],
@@ -1381,7 +1401,7 @@ async def handle_cached_static(request):
             "Cache-Control": "public, max-age=604800, immutable",
         }
     else:
-        body = entry["raw"]
+        body = raw
         headers = {
             "Content-Type": entry["content_type"],
             "Content-Length": str(len(body)),
@@ -1443,9 +1463,10 @@ async def request_size_limit_middleware(request, handler):
 @web.middleware
 async def request_timeout_middleware(request, handler):
     """Apply a per-request timeout (30s for API, 120s for SSE)."""
-    if request.path == "/api/events":
+    request_path = _strip_base_path(request.path)
+    if request_path == "/api/events":
         timeout = 120.0
-    elif request.path.startswith("/api/"):
+    elif request_path.startswith("/api/"):
         timeout = 30.0
     else:
         # Static files / HTML — no timeout
@@ -1453,7 +1474,7 @@ async def request_timeout_middleware(request, handler):
     try:
         return await asyncio.wait_for(handler(request), timeout=timeout)
     except asyncio.TimeoutError:
-        _LOGGER.warning("Request timeout: %s %s", request.method, request.path)
+        _LOGGER.warning("Request timeout: %s %s", request.method, request_path)
         return web.json_response(
             {"ok": False, "error": "Request timeout"},
             status=504,
@@ -1490,8 +1511,8 @@ async def cache_middleware(request, handler):
     # 已由 handle_cached_static / handle_index 设置缓存头的文件跳过
     if response.headers.get("Cache-Control"):
         return response
-    if request.path.startswith("/static/"):
-        if request.path.endswith((".js", ".css", ".png", ".ico", ".woff", ".woff2")):
+    if _strip_base_path(request.path).startswith("/static/"):
+        if _strip_base_path(request.path).endswith((".js", ".css", ".png", ".ico", ".woff", ".woff2")):
             if os.environ.get("CUKTECH_ENV") == "development":
                 response.headers["Cache-Control"] = "no-cache"
             else:
@@ -1506,35 +1527,35 @@ app = web.Application(middlewares=[
     cache_middleware,
     request_timeout_middleware,
 ])
-app.router.add_get("/", lambda r: get_server().handle_index(r))
-app.router.add_get("/phone.html", handle_cached_static)
-app.router.add_get("/config.html", handle_cached_static)
-app.router.add_get("/static/{tail:.*}", handle_cached_static)
-app.router.add_get("/api/health", lambda r: get_server().handle_health(r))
-app.router.add_get("/api/status", lambda r: get_server().handle_status(r))
-app.router.add_post("/api/set", lambda r: get_server().handle_set(r))
-app.router.add_post("/api/port", lambda r: get_server().handle_port(r))
-app.router.add_post("/api/enable", lambda r: get_server().handle_enable(r))
-app.router.add_post("/api/protocol", lambda r: get_server().handle_protocol(r))
-app.router.add_get("/api/log-level", lambda r: get_server().handle_log_level(r))
-app.router.add_post("/api/log-level", lambda r: get_server().handle_log_level(r))
-app.router.add_get("/api/session-recording", lambda r: get_server().handle_session_recording(r))
-app.router.add_post("/api/session-recording", lambda r: get_server().handle_session_recording(r))
-app.router.add_get("/api/web-language", lambda r: get_server().handle_web_language(r))
-app.router.add_post("/api/web-language", lambda r: get_server().handle_web_language(r))
-app.router.add_get("/api/chart", lambda r: get_server().handle_chart(r))
-app.router.add_get("/api/statistics/{port}", lambda r: get_server().handle_statistics(r))
-app.router.add_get("/api/export/{port}", lambda r: get_server().handle_export(r))
-app.router.add_get("/api/bemfa", lambda r: get_server().handle_bemfa(r))
-app.router.add_get("/api/sessions", lambda r: get_server().handle_sessions(r))
-app.router.add_get("/api/sessions/{id}/points", lambda r: get_server().handle_session_points(r))
-app.router.add_get("/api/energy/stats", lambda r: get_server().handle_energy_stats(r))
-app.router.add_get("/api/events", lambda r: get_server().handle_sse(r))
-app.router.add_get("/api/config", lambda r: get_server().handle_config_get(r))
-app.router.add_post("/api/config", lambda r: get_server().handle_config_save(r))
-app.router.add_post("/api/xiaomi/login", lambda r: get_server().handle_xiaomi_login(r))
-app.router.add_post("/api/xiaomi/qr/complete", lambda r: get_server().handle_xiaomi_qr_complete(r))
-app.router.add_post("/api/xiaomi/beaconkey", lambda r: get_server().handle_xiaomi_beaconkey(r))
+app.router.add_get(_route("/"), lambda r: get_server().handle_index(r))
+app.router.add_get(_route("/phone.html"), handle_cached_static)
+app.router.add_get(_route("/config.html"), handle_cached_static)
+app.router.add_get(_route("/static/{tail:.*}"), handle_cached_static)
+app.router.add_get(_route("/api/health"), lambda r: get_server().handle_health(r))
+app.router.add_get(_route("/api/status"), lambda r: get_server().handle_status(r))
+app.router.add_post(_route("/api/set"), lambda r: get_server().handle_set(r))
+app.router.add_post(_route("/api/port"), lambda r: get_server().handle_port(r))
+app.router.add_post(_route("/api/enable"), lambda r: get_server().handle_enable(r))
+app.router.add_post(_route("/api/protocol"), lambda r: get_server().handle_protocol(r))
+app.router.add_get(_route("/api/log-level"), lambda r: get_server().handle_log_level(r))
+app.router.add_post(_route("/api/log-level"), lambda r: get_server().handle_log_level(r))
+app.router.add_get(_route("/api/session-recording"), lambda r: get_server().handle_session_recording(r))
+app.router.add_post(_route("/api/session-recording"), lambda r: get_server().handle_session_recording(r))
+app.router.add_get(_route("/api/web-language"), lambda r: get_server().handle_web_language(r))
+app.router.add_post(_route("/api/web-language"), lambda r: get_server().handle_web_language(r))
+app.router.add_get(_route("/api/chart"), lambda r: get_server().handle_chart(r))
+app.router.add_get(_route("/api/statistics/{port}"), lambda r: get_server().handle_statistics(r))
+app.router.add_get(_route("/api/export/{port}"), lambda r: get_server().handle_export(r))
+app.router.add_get(_route("/api/bemfa"), lambda r: get_server().handle_bemfa(r))
+app.router.add_get(_route("/api/sessions"), lambda r: get_server().handle_sessions(r))
+app.router.add_get(_route("/api/sessions/{id}/points"), lambda r: get_server().handle_session_points(r))
+app.router.add_get(_route("/api/energy/stats"), lambda r: get_server().handle_energy_stats(r))
+app.router.add_get(_route("/api/events"), lambda r: get_server().handle_sse(r))
+app.router.add_get(_route("/api/config"), lambda r: get_server().handle_config_get(r))
+app.router.add_post(_route("/api/config"), lambda r: get_server().handle_config_save(r))
+app.router.add_post(_route("/api/xiaomi/login"), lambda r: get_server().handle_xiaomi_login(r))
+app.router.add_post(_route("/api/xiaomi/qr/complete"), lambda r: get_server().handle_xiaomi_qr_complete(r))
+app.router.add_post(_route("/api/xiaomi/beaconkey"), lambda r: get_server().handle_xiaomi_beaconkey(r))
 
 
 async def on_startup(app_):

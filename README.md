@@ -158,6 +158,10 @@ docker compose up -d
 | 倒计时 | `http://<IP>:8199/static/countdown.html` | 倒计时快速设置 |
 | 设备信息 | `http://<IP>:8199/static/device_info.html` | 设备详情与 BLE 控制 |
 
+### 反向代理子路径
+
+通过 URL 前缀访问管理界面时，在 `config.yaml` 中设置 `server.base_path`（或环境变量 `CUKTECH_BASE_PATH`），例如 `base_path: "/cuktech"`。此时主控台和 API 地址分别为 `https://<your_site>/cuktech/` 和 `https://<your_site>/cuktech/api/status`。配置 nginx 将此前缀代理到服务器，并保留 `/cuktech` 路径。
+
 ### 配置页面使用指南
 
 1. **首次配置**：打开 `/config.html`，点击「小米云自动获取」，用米家 App 扫码，自动获取设备信息

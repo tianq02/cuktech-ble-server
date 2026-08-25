@@ -1,5 +1,5 @@
 // ── API & Config ──
-const API_BASE = window.location.origin;
+const API_BASE = window.location.origin + (window.CUKTECH_BASE_PATH || "");
 
 // Localized scene names/descriptions (keys into the i18n resource packs)
 function sceneName(mode) { return I18N.t('scene.' + ({ 1: 'ai', 2: 'eco', 3: 'single', 4: 'balanced' }[mode] || 'ai')); }

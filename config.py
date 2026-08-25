@@ -70,6 +70,7 @@ class ServerConfig:
     history_db_path: str = "port_history.db"
     reconnect_base_delay: float = 1.0
     reconnect_max_delay: float = 300.0
+    base_path: str = ""
 
 
 @dataclass
@@ -164,6 +165,7 @@ def load_config() -> Config:
         history_db_path=os.environ.get("CUKTECH_HISTORY_DB_PATH", server_cfg.get("history_db_path", "port_history.db")),
         reconnect_base_delay=reconnect_base_delay,
         reconnect_max_delay=reconnect_max_delay,
+        base_path=os.environ.get("CUKTECH_BASE_PATH", server_cfg.get("base_path", "")),
     )
 
     bemfa_cfg = ycfg.get("bemfa", {})
